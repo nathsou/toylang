@@ -1,0 +1,178 @@
+
+fun squared(n) { n * n }
+fun sqrt(x) { x ** 0.5 } 
+
+fun isPrime(n) {
+    if n < 2 { return false }
+    if n == 2 { return true }
+    if n mod 2 == 0 { return false }
+
+    mut i = 3
+
+    while squared(i) <= n {
+        if n mod i == 0 {
+            return false
+        }
+
+        i += 2
+    }
+
+    true
+}
+
+fun primes(count) {
+    let primes = [2]
+    mut i = 3
+
+    while len(primes) < count {
+        if isPrime(i) {
+            append(primes, i)
+        }
+        
+        i += 2
+    }
+
+    primes
+}
+
+fun sum(elems) {
+    mut total = 0
+
+    for n in elems {
+        total = total + n
+    }
+
+    total
+}
+
+fun map(elems, f) {
+    let mapped = []
+
+    for elem in elems {
+        append(mapped, f(elem))
+    }
+
+    mapped
+}
+
+fun filter(elems, f) {
+    let filtered = []
+
+    for elem in elems {
+        if f(elem) {
+            append(filtered, elem)
+        }
+    }
+
+    filtered
+}
+
+fun hash(str, n) {
+    mut h = 0
+
+    for c in str {
+        h = (h + 31 * ord(c)) mod n
+    }
+
+    h
+}
+
+fun range(n) {
+    mut i = 0
+    let rng = []
+
+    while i < n {
+        append(rng, i)
+        i += 1
+    }
+
+    rng
+}
+
+fun hashMake(n) {
+    let cells = []
+    mut i = 0
+
+    while i < n {
+        append(cells, [])
+        i += 1
+    }
+
+    (n, cells)
+}
+
+fun findKeyIndex(list, key) {
+    mut i = 0
+
+    for entry in list {
+        if at(entry, 0) == key {
+            return i
+        }
+
+        i += 1
+    }
+
+    -1
+}
+
+fun hashSet(h, key, value) {
+    let n = at(h, 0)
+    let cells = at(h, 1)
+    let idx = hash(key, n)
+    let list = at(cells, idx)
+    let entryIdx = findKeyIndex(list, key)
+    
+    if entryIdx >= 0 {
+        array_set(list, entryIdx, (key, value))
+    } else {
+        append(list, (key, value))
+    }
+}
+
+fun hashGet(h, key) {
+    let n = at(h, 0)
+    let cells = at(h, 1)
+    let idx = hash(key, n)
+    let list = at(cells, idx)
+    let entryIdx = findKeyIndex(list, key)
+
+    if entryIdx >= 0 {
+        let entry = at(list, entryIdx)
+        return at(entry, 1)
+    }
+
+    ()
+}
+
+fun hashEntries(h) {
+    let entries = []
+    let cells = at(h, 1)
+    
+    for list in cells {
+        for entry in list {
+            append(entries, entry)
+        }
+    }
+
+    entries
+}
+
+fun hashKeys(h) {
+    map(hashEntries(h), fun(entry) at(entry, 0))
+}
+
+fun hashValues(h) {
+    map(hashEntries(h), fun(entry) at(entry, 1))
+}
+
+// print(sqrt(sum(primes(100))))
+// print(map(range(100), fun(n) n ** 2))
+
+let h = hashMake(10)
+hashSet(h, "supercalifragilisticexpialidocious", 7)
+hashSet(h, "nathan", 25)
+hashSet(h, "nathalie", 26)
+hashSet(h, "supercalifragilisticexpialidocious", 3)
+print(h)
+let keys = hashKeys(h)
+print(keys, map(keys, fun(key) hashGet(h, key)))
