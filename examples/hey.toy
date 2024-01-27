@@ -26,7 +26,7 @@ fun primes(count) {
 
     while len(primes) < count {
         if isPrime(i) {
-            append(primes, i)
+            primes.append(i)
         }
         
         i += 2
@@ -49,7 +49,7 @@ fun map(elems, f) {
     mut mapped = []
 
     for elem in elems {
-        append(mapped, f(elem))
+        mapped.append(f(elem))
     }
 
     mapped
@@ -90,10 +90,10 @@ fun all(elems, f) {
 fun chars(str) {
     mut characters = []
     mut i = 0
-    mut length = len(str)
+    mut length = str.len()
 
     while i < length {
-        append(characters, charAt(str, i))
+        characters.append(str.charAt(i))
         i += 1
     }
 
@@ -102,11 +102,11 @@ fun chars(str) {
 
 fun hash(str, n) {
     mut h = 0
-    mut length = len(str)
+    mut length = str.len()
     mut i = 0
 
     while i < length {
-        h = (h + 31 * charCodeAt(str, i)) mod n
+        h = (h + 31 * str.charCodeAt(i)) mod n
         i += 1
     }
 
@@ -118,7 +118,7 @@ fun range(n) {
     mut rng = []
 
     while i < n {
-        append(rng, i)
+        rng.append(i)
         i += 1
     }
 
@@ -127,7 +127,7 @@ fun range(n) {
 
 fun findIndex(elems, f) {
     mut i = 0
-    let length = len(elems)
+    let length = elems.len()
 
     while i < length {
         if f(elems[i]) {
@@ -145,7 +145,7 @@ fun hashMake(n) {
     mut i = 0
 
     while i < n {
-        append(buckets, [])
+        buckets.append([])
         i += 1
     }
 
@@ -153,27 +153,27 @@ fun hashMake(n) {
 }
 
 fun hashKeyLocation(h, key) {
-    let n = len(h)
-    let idx = hash(key, n)
+    let n = h.len()
+    let idx = key.hash(n)
     mut bucket = h[idx]
-    let entryIdx = findIndex(bucket, fun(entry) entry.0 == key)
+    let entryIdx = bucket.findIndex(fun(entry) entry.0 == key)
     (bucket, entryIdx)
 }
 
 fun hashSet(h, key, value) {
-    let loc = hashKeyLocation(h, key)
+    let loc = h.hashKeyLocation(key)
     let bucket = loc.0
     let entryIdx = loc.1
     
     if entryIdx >= 0 {
         bucket[entryIdx] = (key, value)
     } else {
-        append(bucket, (key, value))
+        bucket.append((key, value))
     }
 }
 
 fun hashGet(h, key) {
-    let loc = hashKeyLocation(h, key)
+    let loc = h.hashKeyLocation(key)
     let bucket = loc.0
     let entryIdx = loc.1
 
@@ -193,7 +193,7 @@ fun hashEntries(h) {
     
     for bucket in h {
         for entry in bucket {
-            append(entries, entry)
+            entries.append(entry)
         }
     }
 
@@ -201,17 +201,17 @@ fun hashEntries(h) {
 }
 
 fun hashKeys(h) {
-    map(hashEntries(h), fun(entry) entry.0)
+    hashEntries(h).map(fun(entry) entry.0)
 }
 
 fun hashValues(h) {
-    map(hashEntries(h), fun(entry) entry.1)
+    hashEntries(h).map(fun(entry) entry.1)
 }
 
 mut population = hashMake(10)
-hashSet(population, "Gueberschwihr", 838)
-hashSet(population, "Eguisheim", 1734)
-hashSet(population, "Colmar", 70284)
-hashSet(population, "Troyes", 60928)
-hashSet(population, "Paris", 2102650)
+population.hashSet("Gueberschwihr", 838)
+population.hashSet("Eguisheim", 1734)
+population.hashSet("Colmar", 70284)
+population.hashSet("Troyes", 60928)
+population.hashSet("Paris", 2102650)
 print(population)

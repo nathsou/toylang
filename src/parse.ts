@@ -730,37 +730,48 @@ export const parse = (tokens: Token[]) => {
       const expr = callExpr();
       return Expr.Unary({ op: token.$value as UnaryOp, expr });
     }
-    
+
     return callExpr();
   }
-  
+
   function callExpr(): Expr {
     let lhs = primaryExpr();
-    
+
     while (true) {
       if (matches(Token.Symbol("."))) {
         const token = peek();
-        let matched = false;
 
         switch (token.variant) {
+          case 'Identifier':
+            // universal function call syntax
+            next();
+            consume(Token.Symbol("("));
+            const args = commas(expr);
+            consume(Token.Symbol(")"));
+            lhs = Expr.Call({
+              fun: Expr.Variable({ name: token.$value }),
+              args: [lhs, ...args],
+            });
+            break;
+
           case "Literal":
-            if (token.value.variant === "Num") {
-              next();
-              lhs = Expr.TupleAccess({
-                tuple: lhs,
-                index: token.value.$value,
-              });
-              matched = true;
+            switch (token.value.variant) {
+              case "Num": {
+                next();
+                lhs = Expr.TupleAccess({
+                  tuple: lhs,
+                  index: token.value.$value,
+                });
+                break;
+              }
             }
             break;
+          default:
+            raise("Expected identifier or number literal");
         }
-
-        if (!matched) {
-          raise("Expected identifier or number literal");
-        }
-      } else if (matches(Token.Symbol('['))) {
+      } else if (matches(Token.Symbol("["))) {
         const index = expr();
-        consume(Token.Symbol(']'));
+        consume(Token.Symbol("]"));
         lhs = Expr.ArrayAccess({ arr: lhs, index });
       } else if (matches(Token.Symbol("("))) {
         const args = commas(expr);
