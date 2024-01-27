@@ -62,6 +62,8 @@ export type Expr = DataType<{
   Call: { fun: Expr; args: Expr[] };
   Tuple: { elems: Expr[] };
   Array: { elems: Expr[] };
+  ArrayAccess: { arr: Expr; index: Expr };
+  TupleAccess: { tuple: Expr; index: number };
 }> & { ty?: Type };
 
 export const Expr = constructors<Expr>().get(
@@ -74,7 +76,9 @@ export const Expr = constructors<Expr>().get(
   "Fun",
   "Call",
   "Tuple",
-  "Array"
+  "Array",
+  "ArrayAccess",
+  "TupleAccess",
 );
 
 export type Stmt = DataType<{

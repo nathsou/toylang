@@ -1,5 +1,6 @@
 import { constructors, match, type DataType, matchMany } from "itsamatch";
 import { Expr, type Stmt } from "./ast";
+import { Type } from "./type";
 
 export type Value = DataType<{
   Unit: {};
@@ -72,14 +73,14 @@ export const Value = {
 
 type NativeFunction = {
   name: string;
-  arity: number;
+  signature: { args: Type[]; ret: Type };
   run: (...args: Value[]) => Value;
 };
 
-const NATIVE_FUNCTIONS: NativeFunction[] = [
+export const NATIVE_FUNCTIONS: NativeFunction[] = [
   {
     name: "print",
-    arity: -1,
+    signature: { args: [Type.alpha()], ret: Type.Unit },
     run: (...values: Value[]) => {
       for (const value of values) {
         process.stdout.write(Value.show(value));
@@ -93,12 +94,12 @@ const NATIVE_FUNCTIONS: NativeFunction[] = [
   },
   {
     name: "str",
-    arity: 1,
+    signature: { args: [Type.alpha()], ret: Type.Str },
     run: (value: Value) => Value.Str(Value.show(value)),
   },
   {
     name: "len",
-    arity: 1,
+    signature: { args: [Type.alpha()], ret: Type.Num },
     run: (value: Value) => {
       switch (value.variant) {
         case "Array":
@@ -113,72 +114,50 @@ const NATIVE_FUNCTIONS: NativeFunction[] = [
   },
   {
     name: "append",
-    arity: 2,
+    signature: {
+      args: [Type.Array(Type.alpha()), Type.alpha()],
+      ret: Type.Unit,
+    },
     run: (array: Value, value: Value) => {
-      assert(array.variant === "Array", "append expects an array");
+      assert(array.variant === "Array");
       array.elems.push(value);
       return array;
     },
   },
   {
-    name: "at",
-    arity: 2,
-    run: (array: Value, index: Value) => {
-      assert(index.variant === "Num", "at expects a number");
+    name: "charAt",
+    signature: { args: [Type.Str, Type.Num], ret: Type.Str },
+    run: (str: Value, index: Value) => {
+      assert(str.variant === "Str");
+      assert(index.variant === "Num");
 
-      switch (array.variant) {
-        case "Array":
-          if (index.$value < 0 || index.$value >= array.elems.length) {
-            throw new Error("Index out of bounds");
-          }
-
-          return array.elems[index.$value];
-        case "Tuple":
-          if (index.$value < 0 || index.$value >= array.elems.length) {
-            throw new Error("Index out of bounds");
-          }
-
-          return array.elems[index.$value];
-        case "Str":
-          if (index.$value < 0 || index.$value >= array.$value.length) {
-            throw new Error("Index out of bounds");
-          }
-
-          return Value.Str(array.$value[index.$value]);
-        default:
-          throw new Error("at expects an array or tuple or string");
+      if (index.$value < 0 || index.$value >= str.$value.length) {
+        throw new Error("charAt: index out of bounds");
       }
+
+      return Value.Str(str.$value[index.$value]);
     },
   },
   {
-    name: "array_set",
-    arity: 3,
-    run: (array: Value, index: Value, value: Value) => {
-      assert(index.variant === "Num", "array_set expects a number");
-
-      switch (array.variant) {
-        case "Array":
-          if (index.$value < 0 || index.$value >= array.elems.length) {
-            throw new Error("Index out of bounds");
-          }
-
-          array.elems[index.$value] = value;
-          return array;
-        default:
-          throw new Error("array_set expects an array");
-      }
+    name: "typeOf",
+    signature: { args: [Type.alpha()], ret: Type.Str },
+    run: (value: Value) => Value.Str(value.variant),
+  },
+  {
+    name: "charCodeAt",
+    signature: { args: [Type.Str, Type.Num], ret: Type.Num },
+    run: (str: Value, index: Value) => {
+      assert(str.variant === "Str");
+      assert(index.variant === "Num");
+      return Value.Num(str.$value.charCodeAt(index.$value));
     },
   },
   {
-    name: "ord",
-    arity: 1,
+    name: "panic",
+    signature: { args: [Type.Str], ret: Type.Unit },
     run: (str: Value) => {
-      assert(
-        str.variant === "Str" && str.$value.length === 1,
-        "ord expects a single-character string"
-      );
-
-      return Value.Num(str.$value.charCodeAt(0));
+      assert(str.variant === "Str");
+      throw new Error(str.$value);
     },
   },
 ];
@@ -186,7 +165,7 @@ const NATIVE_FUNCTIONS: NativeFunction[] = [
 export class Env {
   private global: Env;
   private parent?: Env;
-  private members: Map<string, Value> = new Map();
+  members: Map<string, Value> = new Map();
   private returnValue: Value | undefined;
 
   constructor(parent?: Env) {
@@ -388,7 +367,9 @@ export class Env {
         );
 
         const arity =
-          funValue.variant === "Fun" ? funValue.args.length : funValue.arity;
+          funValue.variant === "Fun"
+            ? funValue.args.length
+            : funValue.signature.args.length;
 
         assert(
           arity === -1 || args.length === arity,
@@ -407,6 +388,41 @@ export class Env {
 
         return childEnv.evalExpr(funValue.body);
       },
+      ArrayAccess: ({ arr, index }) => {
+        const arrValue = this.evalExpr(arr);
+        const indexValue = this.evalExpr(index);
+
+        assert(
+          arrValue.variant === "Array",
+          "lhs of array access must be an array"
+        );
+        assert(indexValue.variant === "Num", "index must be a number");
+
+        const idx = indexValue.$value;
+        const array = arrValue.elems;
+
+        if (idx < 0 || idx >= array.length) {
+          throw new Error("Index out of bounds");
+        }
+
+        return array[idx];
+      },
+      TupleAccess: ({ tuple, index }) => {
+        const tupleValue = this.evalExpr(tuple);
+
+        assert(
+          tupleValue.variant === "Tuple",
+          "lhs of tuple access must be a tuple"
+        );
+
+        const elems = tupleValue.elems;
+
+        if (index < 0 || index >= elems.length) {
+          throw new Error("Index out of bounds");
+        }
+
+        return elems[index];
+      },
     });
   }
 
@@ -419,39 +435,45 @@ export class Env {
         this.declare(name, this.evalExpr(value));
       },
       Assign: ({ lhs, op, rhs }) => {
-        assert(
-          lhs.variant === "Variable",
-          "lhs of assignment must be a variable"
-        );
+        let expandedRhs: Expr;
 
         switch (op) {
           case "=":
-            this.assign(lhs.name, this.evalExpr(rhs));
+            expandedRhs = rhs;
             break;
           case "+=":
-            this.assign(
-              lhs.name,
-              this.evalExpr(
-                Expr.Binary({
-                  lhs,
-                  op: "+",
-                  rhs,
-                })
-              )
-            );
+            expandedRhs = Expr.Binary({
+              lhs,
+              op: "+",
+              rhs,
+            });
             break;
           case "-=":
-            this.assign(
-              lhs.name,
-              this.evalExpr(
-                Expr.Binary({
-                  lhs,
-                  op: "-",
-                  rhs,
-                })
-              )
-            );
+            expandedRhs = Expr.Binary({
+              lhs,
+              op: "-",
+              rhs,
+            });
             break;
+        }
+
+        switch (lhs.variant) {
+          case "Variable":
+            this.assign(lhs.name, this.evalExpr(expandedRhs));
+            break;
+          case "ArrayAccess": {
+            const array = this.evalExpr(lhs.arr);
+            const index = this.evalExpr(lhs.index);
+            assert(array.variant === "Array");
+            assert(index.variant === "Num");
+
+            const idx = index.$value;
+            const elems = array.elems;
+            elems[idx] = this.evalExpr(expandedRhs);
+            break;
+          }
+          default:
+            throw new Error("invalid assignment target");
         }
       },
       While: ({ cond, body }) => {

@@ -21,7 +21,7 @@ fun isPrime(n) {
 }
 
 fun primes(count) {
-    let primes = [2]
+    mut primes = [2]
     mut i = 3
 
     while len(primes) < count {
@@ -46,7 +46,7 @@ fun sum(elems) {
 }
 
 fun map(elems, f) {
-    let mapped = []
+    mut mapped = []
 
     for elem in elems {
         append(mapped, f(elem))
@@ -56,7 +56,7 @@ fun map(elems, f) {
 }
 
 fun filter(elems, f) {
-    let filtered = []
+    mut filtered = []
 
     for elem in elems {
         if f(elem) {
@@ -67,11 +67,47 @@ fun filter(elems, f) {
     filtered
 }
 
+fun any(elems, f) {
+    for elem in elems {
+        if f(elem) {
+            return true
+        }
+    }
+
+    false
+}
+
+fun all(elems, f) {
+    for elem in elems {
+        if !f(elem) {
+            return false
+        }
+    }
+
+    true
+}
+
+fun chars(str) {
+    mut characters = []
+    mut i = 0
+    mut length = len(str)
+
+    while i < length {
+        append(characters, charAt(str, i))
+        i += 1
+    }
+
+    characters
+}
+
 fun hash(str, n) {
     mut h = 0
+    mut length = len(str)
+    mut i = 0
 
-    for c in str {
-        h = (h + 31 * ord(c)) mod n
+    while i < length {
+        h = (h + 31 * charCodeAt(str, i)) mod n
+        i += 1
     }
 
     h
@@ -79,7 +115,7 @@ fun hash(str, n) {
 
 fun range(n) {
     mut i = 0
-    let rng = []
+    mut rng = []
 
     while i < n {
         append(rng, i)
@@ -89,23 +125,12 @@ fun range(n) {
     rng
 }
 
-fun hashMake(n) {
-    let cells = []
+fun findIndex(elems, f) {
     mut i = 0
+    let length = len(elems)
 
-    while i < n {
-        append(cells, [])
-        i += 1
-    }
-
-    (n, cells)
-}
-
-fun findKeyIndex(list, key) {
-    mut i = 0
-
-    for entry in list {
-        if at(entry, 0) == key {
+    while i < length {
+        if f(elems[i]) {
             return i
         }
 
@@ -115,41 +140,59 @@ fun findKeyIndex(list, key) {
     -1
 }
 
-fun hashSet(h, key, value) {
-    let n = at(h, 0)
-    let cells = at(h, 1)
+fun hashMake(n) {
+    mut buckets = []
+    mut i = 0
+
+    while i < n {
+        append(buckets, [])
+        i += 1
+    }
+
+    buckets
+}
+
+fun hashKeyLocation(h, key) {
+    let n = len(h)
     let idx = hash(key, n)
-    let list = at(cells, idx)
-    let entryIdx = findKeyIndex(list, key)
+    mut bucket = h[idx]
+    let entryIdx = findIndex(bucket, fun(entry) entry.0 == key)
+    (bucket, entryIdx)
+}
+
+fun hashSet(h, key, value) {
+    let loc = hashKeyLocation(h, key)
+    let bucket = loc.0
+    let entryIdx = loc.1
     
     if entryIdx >= 0 {
-        array_set(list, entryIdx, (key, value))
+        bucket[entryIdx] = (key, value)
     } else {
-        append(list, (key, value))
+        append(bucket, (key, value))
     }
 }
 
 fun hashGet(h, key) {
-    let n = at(h, 0)
-    let cells = at(h, 1)
-    let idx = hash(key, n)
-    let list = at(cells, idx)
-    let entryIdx = findKeyIndex(list, key)
+    let loc = hashKeyLocation(h, key)
+    let bucket = loc.0
+    let entryIdx = loc.1
 
-    if entryIdx >= 0 {
-        let entry = at(list, entryIdx)
-        return at(entry, 1)
+    if entryIdx == -1 {
+        panic("hashGet: key '" ++ key ++ "' not found")
     }
 
-    ()
+    bucket[entryIdx].1
+}
+
+fun hashHas(h, key) {
+    hashKeyLocation(h, key).1 != -1   
 }
 
 fun hashEntries(h) {
-    let entries = []
-    let cells = at(h, 1)
+    mut entries = []
     
-    for list in cells {
-        for entry in list {
+    for bucket in h {
+        for entry in bucket {
             append(entries, entry)
         }
     }
@@ -158,21 +201,17 @@ fun hashEntries(h) {
 }
 
 fun hashKeys(h) {
-    map(hashEntries(h), fun(entry) at(entry, 0))
+    map(hashEntries(h), fun(entry) entry.0)
 }
 
 fun hashValues(h) {
-    map(hashEntries(h), fun(entry) at(entry, 1))
+    map(hashEntries(h), fun(entry) entry.1)
 }
 
-// print(sqrt(sum(primes(100))))
-// print(map(range(100), fun(n) n ** 2))
-
-let h = hashMake(10)
-hashSet(h, "supercalifragilisticexpialidocious", 7)
-hashSet(h, "nathan", 25)
-hashSet(h, "nathalie", 26)
-hashSet(h, "supercalifragilisticexpialidocious", 3)
-print(h)
-let keys = hashKeys(h)
-print(keys, map(keys, fun(key) hashGet(h, key)))
+mut population = hashMake(10)
+hashSet(population, "Gueberschwihr", 838)
+hashSet(population, "Eguisheim", 1734)
+hashSet(population, "Colmar", 70284)
+hashSet(population, "Troyes", 60928)
+hashSet(population, "Paris", 2102650)
+print(population)
