@@ -1,0 +1,44 @@
+
+fun idStr<t>(x: t): Str { x }
+
+fun map<a, b>(elems, f: a -> b) {
+    mut mapped = []
+
+    for elem in elems {
+        mapped.append(f(elem))
+    }
+
+    mapped
+}
+
+fun min(a, b) {
+    if a < b { a } else { b }
+}
+
+fun zip<a, b>(xs: a[], ys: b[]) {
+    let length = min(xs.len(), ys.len())
+    mut zipped = []
+    mut i = 0
+
+    while i < length {
+        zipped.append((xs[i], ys[i]))
+        i += 1
+    }
+
+    zipped
+}
+
+fun unzip<a, b>(pairs): (a[], b[]) {
+    mut xs = []
+    mut ys = []
+
+    for pair in pairs {
+        xs.append(pair.0)
+        ys.append(pair.1)
+    }
+
+    (xs, ys)
+}
+
+let unzipped = [(1, "a", true), (2, "b", false)].unzip()
+print(unzipped)

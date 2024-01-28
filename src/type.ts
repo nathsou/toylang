@@ -58,17 +58,25 @@ function isList(ty: Type): boolean {
   });
 }
 
-function isPartialList(ty: Type, startsWithCons = false): boolean {
-  return match(ty, {
-    Var: () => startsWithCons,
-    Fun: ({ name, args }) => {
-      if (name === "Nil") {
-        return true;
+function showPartialList(ty: Type): string {
+  const elems: string[] = [];
+  ty = unlink(ty);
+
+  while (true) {
+    if (ty.variant === "Fun") {
+      if (ty.name === "Nil") {
+        return elems.join(", ");
       }
 
-      return name === "Cons" && isPartialList(args[1], true);
-    },
-  });
+      if (ty.name === "Cons") {
+        elems.push(show(ty.args[0]));
+        ty = unlink(ty.args[1]);
+        continue;
+      }
+    }
+
+    return [...elems, '...'].join(", ");
+  }
 }
 
 function unlist(ty: Type): Type[] {
@@ -89,6 +97,10 @@ function unlist(ty: Type): Type[] {
 
     throw new Error(`Expected list, got '${show(ty)}'`);
   }
+}
+
+function list(elems: Type[], tail: Type = Type.Nil): Type {
+  return elems.reduceRight((tail, head) => Type.Cons(head, tail), tail);
 }
 
 function show(ty: Type): string {
@@ -113,11 +125,7 @@ function show(ty: Type): string {
         case "Array":
           return `${show(args[0])}[]`;
         case "Tuple":
-          if (!isList(args[0])) {
-            return `(${show(args[0])})`;
-          }
-
-          return `(${unlist(args[0]).map(show).join(", ")})`;
+          return `(${showPartialList(args[0])})`;
         case "Function": {
           const ret = args[1];
 
@@ -144,10 +152,6 @@ function show(ty: Type): string {
   });
 }
 
-function list(elems: Type[], tail: Type = Type.Nil): Type {
-  return elems.reduceRight((tail, head) => Type.Cons(head, tail), tail);
-}
-
 function eq(a: Type, b: Type): boolean {
   return matchMany([a, b], {
     "Var Var": (a, b) => TypeVar.eq(a.ref, b.ref),
@@ -163,7 +167,7 @@ export type TypeVarId = number;
 export type TypeVar = DataType<{
   Unbound: { id: TypeVarId; name?: string; level: number };
   Generic: { id: TypeVarId; name?: string };
-  Param: { name: string; ty?: Type };
+  Param: { name: string };
   Link: { type: Type };
 }>;
 
@@ -193,9 +197,9 @@ export const TypeVar = {
   ...constructors<TypeVar>().get("Unbound", "Generic", "Param", "Link"),
   show: (v: TypeVar): string =>
     match(v, {
-      Unbound: ({ id, name }) => name ?? showTypeVarId(id),
-      Generic: ({ id, name }) => name ?? "'" + showTypeVarId(id),
-      Param: ({ name }) => `'${name}`,
+      Unbound: ({ id, name }) => "!" + (name ?? showTypeVarId(id)),
+      Generic: ({ id, name }) => name ?? showTypeVarId(id),
+      Param: ({ name }) => `%${name}`,
       Link: ({ type }) => Type.show(type),
     }),
   eq: (a: TypeVar, b: TypeVar) =>
@@ -210,7 +214,7 @@ export const TypeVar = {
     TypeVar.Unbound({ id: Context.freshTypeVarId(), name, level }),
 };
 
-function linkTo(self: { ref: TypeVar }, type: Type): void {
+function linkTo(self: { ref: TypeVar }, type: Type, env: TypeEnv): void {
   if (self.ref.variant === "Unbound") {
     if (
       !(
@@ -220,6 +224,18 @@ function linkTo(self: { ref: TypeVar }, type: Type): void {
       )
     ) {
       const deref = unlink(type);
+
+      if (
+        deref.variant === "Var" &&
+        (deref.ref.variant === "Unbound" || deref.ref.variant === "Generic")
+      ) {
+        if (self.ref.name === undefined) {
+          self.ref.name = deref.ref.name;
+        } else {
+          deref.ref.name = self.ref.name;
+        }
+      }
+
       self.ref = TypeVar.Link({ type: deref });
     }
   }
@@ -247,49 +263,99 @@ const Subst = {
   },
 };
 
-function generalize(ty: Type, level: number): Type {
-  return match(ty, {
-    Var: ({ ref }) =>
-      match(ref, {
-        Unbound: ({ id, level: level2, name }) => {
-          if (level2 > level) {
-            return Type.Var(TypeVar.Generic({ id, name }));
-          }
-
-          return ty;
-        },
-        Generic: () => ty,
-        Param: () => ty,
-        Link: ({ type }) => generalize(type, level),
-      }),
-    Fun: ({ name, args }) =>
-      Type.Fun(
-        name,
-        args.map((arg) => generalize(arg, level))
-      ),
-  });
-}
-
-function instantiate(ty: Type, level: number): { ty: Type; subst: Subst } {
-  const subst: Subst = new Map();
+function generalize(ty: Type, env: TypeEnv): Type {
+  const generalizedParams = new Map<string, Type>();
 
   const aux = (ty: Type): Type => {
     return match(ty, {
       Var: ({ ref }) =>
         match(ref, {
-          Unbound: () => ty,
+          Unbound: ({ id, level: level2, name }) => {
+            if (level2 > env.letLevel) {
+              return Type.Var(TypeVar.Generic({ id, name }));
+            }
+
+            return ty;
+          },
+          Generic: () => ty,
+          Param: ({ name }) => {
+            if (generalizedParams.has(name)) {
+              return generalizedParams.get(name)!;
+            }
+
+            const paramTy = env.generics.lookup(name);
+
+            if (paramTy) {
+              const genTy = aux(paramTy);
+              generalizedParams.set(name, genTy);
+              return genTy;
+            }
+
+            throw new Error(`generalize: Unresolved type parameter '${name}'`);
+          },
+          Link: ({ type }) => aux(type),
+        }),
+      Fun: ({ name, args }) =>
+        Type.Fun(
+          name,
+          args.map((arg) => aux(arg))
+        ),
+    });
+  };
+
+  const gen = aux(ty);
+  return gen;
+}
+
+function instantiate(ty: Type, env: TypeEnv): { ty: Type; subst: Subst } {
+  const subst: Subst = new Map();
+  const genericParams = new Map<string, Type>();
+
+  const aux = (ty: Type): Type => {
+    return match(ty, {
+      Var: ({ ref }) =>
+        match(ref, {
+          Unbound: ({ name }) => {
+            if (name) {
+              const paramTy = env.generics.lookup(name);
+
+              if (paramTy) {
+                return paramTy;
+              } else {
+                const parmTy = genericParams.get(name);
+
+                if (parmTy) {
+                  return parmTy;
+                } else {
+                  const genTy = env.freshType(name);
+                  genericParams.set(name, genTy);
+                  return genTy;
+                }
+              }
+            } else {
+              return ty;
+            }
+          },
           Generic: ({ id, name }) => {
             if (subst.has(id)) {
               return subst.get(id)!;
             }
 
-            const freshTy = Type.fresh(level, name);
+            const freshTy = env.freshType(name);
             Subst.set(subst, id, freshTy);
 
             return freshTy;
           },
           Param: ({ name }) => {
-            throw new Error(`Unresolved type parameter '${name}'`);
+            const paramTy = env.generics.lookup(name);
+
+            if (paramTy) {
+              return aux(paramTy);
+            } else {
+              throw new Error(
+                `instantiate: Unresolved type parameter '${name}'`
+              );
+            }
           },
           Link: ({ type }) => aux(type),
         }),
@@ -313,18 +379,18 @@ function occurs(id: number, ty: Type): boolean {
   });
 }
 
-function occursCheckAdjustLevels(id: number, level: number, ty: Type): void {
-  const go = (t: Type): void => {
+function occursCheckAdjustLevels(id: number, ty: Type, env: TypeEnv): void {
+  const aux = (t: Type): void => {
     match(t, {
       Var: (v) =>
         match(v.ref, {
-          Unbound: ({ id: id2, level: level2 }) => {
+          Unbound: ({ id: id2, level: level2, name }) => {
             if (id === id2) {
               throw new Error("Recursive type");
             }
 
-            if (level2 > level) {
-              v.ref = TypeVar.Unbound({ id: id2, level });
+            if (level2 > env.letLevel) {
+              v.ref = TypeVar.Unbound({ id: id2, level: env.letLevel, name });
             }
           },
           Generic: () => {
@@ -333,20 +399,33 @@ function occursCheckAdjustLevels(id: number, level: number, ty: Type): void {
             );
           },
           Param: ({ name }) => {
-            throw new Error(`Unresolved type parameter '${name}'`);
+            const paramTy = env.generics.lookup(name);
+
+            if (paramTy) {
+              aux(paramTy);
+            } else {
+              throw new Error(
+                `occursCheck: Unresolved type parameter '${name}'`
+              );
+            }
           },
-          Link: ({ type }) => go(type),
+          Link: ({ type }) => aux(type),
         }),
-      Fun: ({ args }) => args.forEach(go),
+      Fun: ({ args }) => args.forEach(aux),
     });
   };
 
-  go(ty);
+  aux(ty);
 }
 
-function unifyVar(v: { ref: TypeVar }, ty: Type, eqs: [Type, Type][]): void {
+function unifyVar(
+  v: { ref: TypeVar },
+  ty: Type,
+  eqs: [Type, Type][],
+  env: TypeEnv
+): void {
   match(v.ref, {
-    Unbound: ({ id, level }) => {
+    Unbound: ({ id}) => {
       if (
         ty.variant === "Var" &&
         ty.ref.variant === "Unbound" &&
@@ -359,8 +438,8 @@ function unifyVar(v: { ref: TypeVar }, ty: Type, eqs: [Type, Type][]): void {
         );
       }
 
-      occursCheckAdjustLevels(id, level, ty);
-      linkTo(v, ty);
+      occursCheckAdjustLevels(id, ty, env);
+      linkTo(v, ty, env);
     },
     Generic: () => {
       throw new Error(
@@ -368,7 +447,7 @@ function unifyVar(v: { ref: TypeVar }, ty: Type, eqs: [Type, Type][]): void {
       );
     },
     Param: ({ name }) => {
-      throw new Error(`Unresolved type parameter '${name}'`);
+      throw new Error(`unifyVar: Unresolved type parameter '${name}'`);
     },
     Link: ({ type }) => {
       eqs.push([type, ty]);
@@ -377,7 +456,7 @@ function unifyVar(v: { ref: TypeVar }, ty: Type, eqs: [Type, Type][]): void {
 }
 
 // returns true if unification succeeded
-function unify(a: Type, b: Type): boolean {
+function unify(a: Type, b: Type, env: TypeEnv): boolean {
   const eqs: [Type, Type][] = [[a, b]];
 
   while (eqs.length > 0) {
@@ -389,9 +468,9 @@ function unify(a: Type, b: Type): boolean {
     }
 
     if (s.variant === "Var") {
-      unifyVar(s, t, eqs);
+      unifyVar(s, t, eqs, env);
     } else if (t.variant === "Var") {
-      unifyVar(t, s, eqs);
+      unifyVar(t, s, eqs, env);
     } else if (s.variant === "Fun" && t.variant === "Fun") {
       if (s.name !== t.name || s.args.length !== t.args.length) {
         return false;
@@ -433,6 +512,7 @@ class Scope<T> {
 
 export class TypeEnv {
   variables: Scope<VarInfo>;
+  generics: Scope<Type>;
   parent?: TypeEnv;
   letLevel: number;
   functionStack: { ty: Type }[];
@@ -440,13 +520,14 @@ export class TypeEnv {
   constructor(parent?: TypeEnv) {
     this.parent = parent;
     this.variables = new Scope(parent?.variables);
+    this.generics = new Scope(parent?.generics);
     this.letLevel = parent?.letLevel ?? 0;
     this.functionStack = [...(parent?.functionStack ?? [])];
 
     if (parent === undefined) {
-      for (const fn of NATIVE_FUNCTIONS) {
-        const funTy = Type.Function(fn.signature.args, fn.signature.ret);
-        this.variables.declare(fn.name, { mut: false, ty: funTy });
+      for (const { name, signature } of NATIVE_FUNCTIONS) {
+        const funTy = Type.Function(signature.args, signature.ret);
+        this.variables.declare(name, { mut: false, ty: funTy });
       }
     }
   }
@@ -455,14 +536,22 @@ export class TypeEnv {
     return new TypeEnv(this);
   }
 
-  private freshType(): Type {
-    return Type.fresh(this.letLevel);
+  freshType(name?: string): Type {
+    return Type.fresh(this.letLevel, name);
   }
 
-  private unify(a: Type, b: Type): void {
-    if (!unify(a, b)) {
+  unify(a: Type, b: Type): void {
+    if (!unify(a, b, this)) {
       throw new Error(`Cannot unify '${show(a)}' with '${show(b)}'`);
     }
+  }
+
+  instantiate(ty: Type): Type {
+    return instantiate(ty, this).ty;
+  }
+
+  generalize(ty: Type): Type {
+    return generalize(ty, this);
   }
 
   inferExpr(expr: Expr): Type {
@@ -476,12 +565,12 @@ export class TypeEnv {
         }),
       Variable: ({ name }) => {
         const info = this.variables.lookup(name);
+
         if (!info) {
           throw new Error(`Variable '${name}' not found`);
         }
 
-        const instTy = instantiate(info.ty, this.letLevel).ty;
-        return instTy;
+        return this.instantiate(info.ty);
       },
       Unary: ({ op, expr }) => {
         const exprTy = this.inferExpr(expr);
@@ -520,11 +609,7 @@ export class TypeEnv {
         };
 
         const [arg1, arg2, ret] = BINARY_OP_TYPE[op];
-        const funTy = Type.instantiate(
-          Type.Function([arg1, arg2], ret),
-          this.letLevel
-        ).ty;
-
+        const funTy = this.instantiate(Type.Function([arg1, arg2], ret));
         this.unify(funTy, Type.Function([lhsTy, rhsTy], ret));
 
         return ret;
@@ -572,10 +657,15 @@ export class TypeEnv {
 
         return thenTy;
       },
-      Fun: ({ args, ret, body }) => {
+      Fun: ({ generics, args, ret, body }) => {
         const funEnv = this.child();
-        const argTys = args.map((arg) => arg.ann ?? this.freshType());
-        const returnTy = ret ?? this.freshType();
+
+        for (const generic of generics) {
+          funEnv.generics.declare(generic, funEnv.freshType(generic));
+        }
+
+        const argTys = args.map((arg) => arg.ann ?? funEnv.freshType());
+        const returnTy = ret ?? funEnv.freshType();
         const retTyInfo = { ty: returnTy };
         funEnv.functionStack.push(retTyInfo);
 
@@ -586,9 +676,10 @@ export class TypeEnv {
         const bodyTy = funEnv.inferExpr(body);
         funEnv.functionStack.pop();
 
-        this.unify(bodyTy, returnTy);
+        funEnv.unify(bodyTy, returnTy);
 
-        return Type.Function(argTys, returnTy);
+        // ensure type parameters are replaced by their bindings
+        return funEnv.instantiate(Type.Function(argTys, returnTy));
       },
       Call: ({ fun, args }) => {
         const funTy = this.inferExpr(fun);
@@ -636,15 +727,16 @@ export class TypeEnv {
         this.inferExpr(expr);
       },
       Let: ({ mut, name, ann, value }) => {
-        this.letLevel += 1;
-        const rhsTy = this.inferExpr(value);
-        this.letLevel -= 1;
+        const letEnv = this.child();
+        letEnv.letLevel += 1;
+        const rhsTy = letEnv.inferExpr(value);
+        letEnv.letLevel -= 1;
 
         if (ann) {
-          this.unify(rhsTy, ann);
+          letEnv.unify(rhsTy, ann);
         }
 
-        const genTy = mut ? rhsTy : generalize(rhsTy, this.letLevel);
+        const genTy = mut ? rhsTy : letEnv.generalize(rhsTy);
         this.variables.declare(name, { mut, ty: genTy });
       },
       Assign: ({ lhs, op, rhs }) => {
@@ -653,7 +745,9 @@ export class TypeEnv {
 
         switch (op) {
           case "=":
+            console.log(`lhs: ${show(lhsTy)}, rhs: ${show(rhsTy)}`);
             this.unify(lhsTy, rhsTy);
+            console.log(`lhs: ${show(lhsTy)}, rhs: ${show(rhsTy)}`);
             break;
           case "+=":
           case "-=":

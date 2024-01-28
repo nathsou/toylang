@@ -39,7 +39,7 @@ fun sum(elems) {
     mut total = 0
 
     for n in elems {
-        total = total + n
+        total += n
     }
 
     total
@@ -85,6 +85,23 @@ fun all(elems, f) {
     }
 
     true
+}
+
+fun min(a, b) {
+    if a < b { a } else { b }
+}
+
+fun zip(xs, ys) {
+    let length = min(xs.len(), ys.len())
+    mut zipped = []
+    mut i = 0
+
+    while i < length {
+        zipped.append((xs[i], ys[i]))
+        i += 1
+    }
+
+    zipped
 }
 
 fun chars(str) {
@@ -140,7 +157,7 @@ fun findIndex(elems, f) {
     -1
 }
 
-fun hashMake(n) {
+fun hashMake<v>(n): (Str, v)[][] {
     mut buckets = []
     mut i = 0
 
@@ -160,7 +177,7 @@ fun hashKeyLocation(h, key) {
     (bucket, entryIdx)
 }
 
-fun hashSet(h, key, value) {
+fun hashSet<v>(h, key, value: v) {
     let loc = h.hashKeyLocation(key)
     let bucket = loc.0
     let entryIdx = loc.1

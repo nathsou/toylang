@@ -470,37 +470,11 @@ export const parse = (tokens: Token[]) => {
     return lhs;
   }
 
-  function attempt<T>(p: () => T): T | undefined {
-    const start = index;
-
-    try {
-      return p();
-    } catch (e) {
-      index = start;
-    }
-  }
-
-  function parens<T>(p: () => T): T {
-    consume(Token.Symbol("("));
-    const ret = p();
-    consume(Token.Symbol(")"));
-
-    return ret;
-  }
-
-  function brackets<T>(p: () => T): T {
-    consume(Token.Symbol("["));
-    const ret = p();
-    consume(Token.Symbol("]"));
-
-    return ret;
-  }
-
   function typeParams(): string[] {
     if (matches(Token.Symbol("<"))) {
       const params = commas(() => {
         const name = identifier();
-        if (name[0].toLowerCase() === name[0]) {
+        if (name[0].toLowerCase() !== name[0]) {
           throw new Error("type parameters must be lowercase");
         }
 

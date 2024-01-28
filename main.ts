@@ -21,6 +21,10 @@ if (!path) {
     for (const [name, { ty }] of typeEnv.variables.members) {
       console.log(`${name}: ${Type.show(ty)}`);
     }
+
+    if (typeEnv.variables.members.size > 0) {
+      console.log();
+    }
   }
 
   const env = new Env();
