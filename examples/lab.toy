@@ -1,6 +1,8 @@
 
 fun idStr<t>(x: t): Str { x }
 
+fun id(x) x
+
 fun map<a, b>(elems, f: a -> b) {
     mut mapped = []
 
