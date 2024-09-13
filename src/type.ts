@@ -347,14 +347,10 @@ function generalize(ty: Type, env: TypeEnv): Type {
           args.map((arg) => aux(arg))
         ),
       Record: ({ row }) => {
-        const entries = rowEntries(row);
-        const genFields: Record<string, Type> = {};
-
-        for (const [name, fieldTy] of entries) {
-          genFields[name] = aux(fieldTy);
-        }
-
-        return Type.Record(rowFromEntries(Object.entries(genFields), env.freshType()));
+        return match(row, {
+          Extend: ({ name, ty, tail }) => Type.Record(Row.Extend(name, aux(ty), aux(tail))),
+          _: () => ty,
+        });
       },
     });
   };
@@ -395,7 +391,13 @@ function instantiate(ty: Type, env: TypeEnv): { ty: Type; subst: Subst } {
           Link: ({ type }) => aux(type),
         }),
       Fun: ({ name, args }) => Type.Fun(name, args.map(aux)),
-      Record: ({ row }) => Type.Record(rowMap(row, aux, env.freshType())),
+      Record: ({ row }) => {
+        return match(row, {
+          Empty: () => ty,
+          Extend: ({ name, ty, tail }) =>
+            Type.Record(Row.Extend(name, aux(ty), aux(tail))),
+        });
+      },
     });
   };
 
@@ -537,7 +539,7 @@ function unify(a: Type, b: Type, env: TypeEnv): boolean {
         if (isTailUnbound) {
           if (tail1.variant === 'Var') {
             if (tail1.ref.variant === 'Link') {
-              throw new Error("Recursive type");
+              throw new Error("Recursive row types");
             }
           }
         }
@@ -552,32 +554,32 @@ function unify(a: Type, b: Type, env: TypeEnv): boolean {
   return true;
 }
 
-function rewriteRow(row2: Type, field: string, ty: Type, env: TypeEnv): Type {
+function rewriteRow(row2: Type, field1: string, ty1: Type, env: TypeEnv): Type {
   return match(row2, {
     Record: ({ row }) => {
       return match(row, {
         Empty: () => {
-          throw new Error(`Record does not contain field '${field}'`);
+          throw new Error(`Record does not contain field '${field1}'`);
         },
-        Extend: ({ name, ty: ty2, tail }) => {
-          if (name === field) {
-            env.unify(ty2, ty);
-            return tail;
+        Extend: ({ name: name2, ty: ty2, tail: tail2 }) => {
+          if (name2 === field1) {
+            env.unify(ty1, ty2);
+            return tail2;
           }
 
-          return Type.Record(Row.Extend(name, ty2, rewriteRow(tail, field, ty, env)));
+          return Type.Record(Row.Extend(name2, ty2, rewriteRow(tail2, field1, ty1, env)));
         },
       });
     },
     Var: v => {
       return match(v.ref, {
         Unbound: ({ level }) => {
-          const tail = Type.fresh(level);
-          const row2 = Row.Extend(field, ty, tail);
+          const tail2 = Type.fresh(level);
+          const row2 = Row.Extend(field1, ty1, tail2);
           linkTo(v, Type.Record(row2), env);
-          return tail;
+          return tail2;
         },
-        Link: ({ type }) => rewriteRow(type, field, ty, env),
+        Link: ({ type }) => rewriteRow(type, field1, ty1, env),
         _: () => {
           throw new Error("Expected record type");
         },
