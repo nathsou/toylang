@@ -5,6 +5,7 @@ import { NATIVE_FUNCTIONS } from "./interpret";
 export type Type = DataType<{
   Var: { ref: TypeVar };
   Fun: { name: string; args: Type[] };
+  Record: { row: Row };
 }>;
 
 export const Type = {
@@ -16,6 +17,7 @@ export const Type = {
     name,
     args,
   }),
+  Record: (row: Row): Type => ({ variant: "Record", row }),
   Array: (elem: Type): Type => Type.Fun("Array", [elem]),
   Tuple: (elems: Type[] | Type): Type =>
     Array.isArray(elems)
@@ -74,9 +76,56 @@ export const TypeVar = {
     TypeVar.Unbound({ id: Context.freshTypeVarId(), level }),
 };
 
+export type Row = DataType<{
+  Empty: {};
+  Extend: { name: string; ty: Type; tail: Type };
+}>;
+
+export const Row = {
+  Empty: (): Row => ({ variant: "Empty" }),
+  Extend: (name: string, ty: Type, tail: Type): Row =>
+    ({ variant: "Extend", name, ty, tail }),
+};
+
+const rowFromEntries = (entries: [string, Type][], tail: Type): Row => {  
+  let row: Row = Row.Empty();
+
+  entries.toSorted((a, b) => a[0].localeCompare(b[0])).forEach(([name, ty], i) => {
+    const rest = i === 0 ? tail : Type.Record(row);
+    row = Row.Extend(name, ty, rest);
+  });
+
+  return row;
+};
+
+const rowEntries = (row: Row): [string, Type][] => {
+  const entries: [string, Type][] = [];
+
+  function aux(row: Row): void {
+    match(row, {
+      Empty: () => {},
+      Extend: ({ name, ty, tail }) => {
+        entries.push([name, ty]);
+        match(unlink(tail), {
+          Record: ({ row }) => aux(row),
+          _: () => {},
+        });
+      },
+    });
+  }
+
+  aux(row);
+  
+  return entries;
+};
+
+const rowMap = (row: Row, f: (ty: Type) => Type, tail: Type): Row => {
+  const entries = rowEntries(row);
+  return rowFromEntries(entries.map(([name, ty]) => [name, f(ty)]), tail);
+};
+
 function isList(ty: Type): boolean {
   return match(ty, {
-    Var: () => false,
     Fun: ({ name, args }) => {
       if (name === "Nil") {
         return true;
@@ -84,6 +133,7 @@ function isList(ty: Type): boolean {
 
       return name === "Cons" && isList(args[1]);
     },
+    _: () => false,
   });
 }
 
@@ -177,6 +227,14 @@ function show(ty: Type): string {
 
           return `${name}<${args.map(show).join(", ")}>`;
       }
+    },
+    Record: ({ row }) => {
+      const entries = rowEntries(row).sort(([a], [b]) => a.localeCompare(b));
+      if (entries.length === 0) {
+        return "{}";
+      }
+
+      return `{ ${entries.map(([name, ty]) => `${name}: ${show(ty)}`).join(", ")} }`;
     },
   });
 }
@@ -288,6 +346,12 @@ function generalize(ty: Type, env: TypeEnv): Type {
           name,
           args.map((arg) => aux(arg))
         ),
+      Record: ({ row }) => {
+        return match(row, {
+          Extend: ({ name, ty, tail }) => Type.Record(Row.Extend(name, aux(ty), aux(tail))),
+          _: () => ty,
+        });
+      },
     });
   };
 
@@ -327,6 +391,13 @@ function instantiate(ty: Type, env: TypeEnv): { ty: Type; subst: Subst } {
           Link: ({ type }) => aux(type),
         }),
       Fun: ({ name, args }) => Type.Fun(name, args.map(aux)),
+      Record: ({ row }) => {
+        return match(row, {
+          Empty: () => ty,
+          Extend: ({ name, ty, tail }) =>
+            Type.Record(Row.Extend(name, aux(ty), aux(tail))),
+        });
+      },
     });
   };
 
@@ -343,6 +414,7 @@ function occurs(id: number, ty: Type): boolean {
         Param: () => false,
       }),
     Fun: ({ args }) => args.some((arg) => occurs(id, arg)),
+    Record: ({ row }) => rowEntries(row).some(([_, fieldTy]) => occurs(id, fieldTy)),
   });
 }
 
@@ -379,6 +451,7 @@ function occursCheckAdjustLevels(id: number, ty: Type, env: TypeEnv): void {
           Link: ({ type }) => aux(type),
         }),
       Fun: ({ args }) => args.forEach(aux),
+      Record: ({ row }) => rowEntries(row).forEach(([_, fieldTy]) => aux(fieldTy)),
     });
   };
 
@@ -434,6 +507,8 @@ function unify(a: Type, b: Type, env: TypeEnv): boolean {
       continue;
     }
 
+    console.log(`unify '${show(s)}' with '${show(t)}'`);
+
     if (s.variant === "Var") {
       unifyVar(s, t, eqs, env);
     } else if (t.variant === "Var") {
@@ -446,12 +521,74 @@ function unify(a: Type, b: Type, env: TypeEnv): boolean {
       for (let i = 0; i < s.args.length; i++) {
         eqs.push([s.args[i], t.args[i]]);
       }
+    } else if (s.variant === 'Record' && t.variant === 'Record') {
+      if (s.row.variant === 'Empty' && t.row.variant === 'Empty') {
+        // nothing to do
+      } else if (s.row.variant === 'Extend' && t.row.variant === 'Extend') {
+        const { name: name1, ty: ty1, tail: tail1 } = s.row;
+        let isTailUnbound = false;
+
+        if (tail1.variant === 'Var') {
+          if (tail1.ref.variant === 'Unbound') {
+            isTailUnbound = true;
+          }
+        }
+
+        const tail2 = rewriteRow(t, name1, ty1, env);
+
+        if (isTailUnbound) {
+          if (tail1.variant === 'Var') {
+            if (tail1.ref.variant === 'Link') {
+              throw new Error("Recursive row types");
+            }
+          }
+        }
+
+        eqs.push([tail1, tail2]);
+      }
     } else {
       return false;
     }
   }
 
   return true;
+}
+
+function rewriteRow(row2: Type, field1: string, ty1: Type, env: TypeEnv): Type {
+  return match(row2, {
+    Record: ({ row }) => {
+      return match(row, {
+        Empty: () => {
+          throw new Error(`Record does not contain field '${field1}'`);
+        },
+        Extend: ({ name: name2, ty: ty2, tail: tail2 }) => {
+          if (name2 === field1) {
+            env.unify(ty1, ty2);
+            return tail2;
+          }
+
+          return Type.Record(Row.Extend(name2, ty2, rewriteRow(tail2, field1, ty1, env)));
+        },
+      });
+    },
+    Var: v => {
+      return match(v.ref, {
+        Unbound: ({ level }) => {
+          const tail2 = Type.fresh(level);
+          const row2 = Row.Extend(field1, ty1, tail2);
+          linkTo(v, Type.Record(row2), env);
+          return tail2;
+        },
+        Link: ({ type }) => rewriteRow(type, field1, ty1, env),
+        _: () => {
+          throw new Error("Expected record type");
+        },
+      });
+    },
+    _: () => {
+      throw new Error("Expected record type");
+    },
+  });
 }
 
 type VarInfo = { mut: boolean; ty: Type };
@@ -606,8 +743,11 @@ export class TypeEnv {
       Tuple: ({ elems }) => {
         return Type.Tuple(elems.map((elem) => this.inferExpr(elem)));
       },
-      _: () => {
-        throw new Error("Not implemented");
+      Record: ({ entries }) => {
+        return Type.Record(rowFromEntries(
+          entries.map(({ name, value }) => [name, this.inferExpr(value)]),
+          this.freshType(),
+        ));
       },
       If: ({ cond, then, otherwise }) => {
         const condTy = this.inferExpr(cond);
@@ -681,6 +821,16 @@ export class TypeEnv {
         const expectedLhsTy = Type.Tuple(Type.utils.list(elems, tail));
         this.unify(lhsTy, expectedLhsTy);
         return elems[index];
+      },
+      RecordAccess: ({ record, name }) => {
+        const fieldTy = expr.ty ?? this.freshType();
+        const tail = this.freshType();
+        const partialRecordTy = Type.Record(Row.Extend(name, fieldTy, tail));
+        const recordTy = this.inferExpr(record);
+        console.log(show(recordTy), show(partialRecordTy), name);
+        this.unify(recordTy, partialRecordTy);
+        console.log('final record ty', show(recordTy));
+        return fieldTy;
       },
     });
 
