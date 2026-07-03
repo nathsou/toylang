@@ -717,15 +717,20 @@ export const parse = (tokens: Token[]) => {
 
         switch (token.variant) {
           case 'Identifier':
-            // universal function call syntax
             next();
-            consume(Token.Symbol("("));
-            const args = commas(expr);
-            consume(Token.Symbol(")"));
-            lhs = Expr.Call({
-              fun: Expr.Variable({ name: token.$value }),
-              args: [lhs, ...args],
-            });
+            
+            if (matches(Token.Symbol("("))) {
+              // universal function call syntax
+              const args = commas(expr);
+              consume(Token.Symbol(")"));
+              lhs = Expr.Call({
+                fun: Expr.Variable({ name: token.$value }),
+                args: [lhs, ...args],
+              });
+            } else {
+              // Record access
+              lhs = Expr.RecordAccess({ record: lhs, name: token.$value });
+            }
             break;
 
           case "Literal":
@@ -774,7 +779,7 @@ export const parse = (tokens: Token[]) => {
           case "(":
             return tupleExpr();
           case "{":
-            return blockExpr();
+            return blockOrRecordExpr();
           case "[":
             return arrayExpr();
           default:
@@ -808,8 +813,34 @@ export const parse = (tokens: Token[]) => {
     return Expr.Array({ elems });
   }
 
-  function blockExpr(): Expr {
+  function blockOrRecordExpr(): Expr {
     consume(Token.Symbol("{"));
+    
+    const nextToken = peek();
+
+    if (nextToken.variant === 'Identifier') {
+      const nextNextToken = peek(1);
+      if (nextNextToken.variant === 'Symbol' && nextNextToken.$value === ":") {
+        const fields = sepBy(() => {
+            const name = identifier();
+            consume(Token.Symbol(":"));
+            const value = expr();
+            return { name, value };
+          },
+          Token.Symbol(","),
+          Token.Symbol("}"),
+        );
+
+        consume(Token.Symbol("}"));
+
+        return Expr.Record({ entries: fields });
+      }
+    } else if (nextToken.variant === 'Symbol' && nextToken.$value === ":") {
+      next();
+      consume(Token.Symbol("}"));
+      return Expr.Record({ entries: [] });
+    }
+
     const stmts: Stmt[] = [];
 
     while (!matches(Token.Symbol("}"))) {

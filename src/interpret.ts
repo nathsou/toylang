@@ -9,6 +9,7 @@ export type Value = DataType<{
   Str: string;
   Tuple: { elems: Value[] };
   Array: { elems: Value[] };
+  Record: { entries: Record<string, Value> };
   Fun: { args: string[]; body: Expr };
   NativeFun: NativeFunction;
 }>;
@@ -41,6 +42,7 @@ export const Value = {
     "Str",
     "Tuple",
     "Array",
+    "Record",
     "Fun",
     "NativeFun"
   ),
@@ -65,6 +67,19 @@ export const Value = {
       Str: (str) => '"' + str + '"',
       Tuple: ({ elems }) => `(${elems.map(Value.show).join(", ")})`,
       Array: ({ elems }) => `[${elems.map(Value.show).join(", ")}]`,
+      Record: ({ entries }) => {
+        const fields = Object.entries(entries);
+        
+        if (fields.length === 0) {
+          return "{:}";
+        }
+
+        const fieldsFmt = Object.entries(entries)
+          .map(([name, value]) => `${name}: ${Value.show(value)}`)
+          .join(", ");
+
+        return `{ ${fieldsFmt} }`;
+      },
       Fun: () => "<fun>",
       NativeFun: (fun) => `<@${fun.name}>`,
     });
@@ -422,6 +437,21 @@ export class Env {
         }
 
         return elems[index];
+      },
+      Record: ({ entries }) => {
+        const record: Record<string, Value> = {};
+
+        for (const { name, value } of entries) {
+          record[name] = this.evalExpr(value);
+        }
+
+        return Value.Record({ entries: record });
+      },
+      RecordAccess: ({ record, name }) => {
+        const recordValue = this.evalExpr(record);
+        assert(recordValue.variant === "Record", "lhs of record access must be a record");
+        assert(name in recordValue.entries, "field not found in record");
+        return recordValue.entries[name];
       },
     });
   }
